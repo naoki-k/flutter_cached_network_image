@@ -105,16 +105,16 @@ class ImageLoader implements platform.ImageLoader {
   }
 
   Stream<ui.Codec> _loadAsyncHttpGet(
-    String url,
-    String? cacheKey,
-    StreamController<ImageChunkEvent> chunkEvents,
-    _FileDecoderCallback decode,
-    BaseCacheManager cacheManager,
-    int? maxHeight,
-    int? maxWidth,
-    Map<String, String>? headers,
-    VoidCallback evictImage,
-  ) async* {
+      String url,
+      String? cacheKey,
+      StreamController<ImageChunkEvent> chunkEvents,
+      _FileDecoderCallback decode,
+      BaseCacheManager cacheManager,
+      int? maxHeight,
+      int? maxWidth,
+      Map<String, String>? headers,
+      VoidCallback evictImage,
+      ) async* {
     try {
       await for (final result in cacheManager.getFileStream(
         url,
@@ -123,30 +123,32 @@ class ImageLoader implements platform.ImageLoader {
         headers: headers,
       )) {
         if (result is DownloadProgress) {
-          chunkEvents.add(
-            ImageChunkEvent(
-              cumulativeBytesLoaded: result.downloaded,
-              expectedTotalBytes: result.totalSize,
-            ),
-          );
+          chunkEvents.add(ImageChunkEvent(
+            cumulativeBytesLoaded: result.downloaded,
+            expectedTotalBytes: result.totalSize,
+          ));
+          continue;
         }
+
         if (result is FileInfo) {
-          final file = result.file;
-          final bytes = await file.readAsBytes();
-          final decoded = await decode(bytes);
-          yield decoded;
+          final bytes = await result.file.readAsBytes();
+          final blob = html.Blob([bytes]);
+          final objectUrl = html.Url.createObjectUrlFromBlob(blob);
+
+          final codec = await ui.webOnlyInstantiateImageCodecFromUrl(
+            Uri.parse(objectUrl),
+          );
+          html.Url.revokeObjectUrl(objectUrl);
+
+          yield codec;
         }
       }
-    } on Object catch (e) {
-      // Depending on where the exception was thrown, the image cache may not
-      // have had a chance to track the key in the cache at all.
-      // Schedule a microtask to give the cache a chance to add the key.
-      scheduleMicrotask(() {
-        evictImage();
-      });
+    } on Object {
+      scheduleMicrotask(evictImage);
       rethrow;
+    } finally {
+      await chunkEvents.close();
     }
-    await chunkEvents.close();
   }
 
   Future<ui.Codec> _loadAsyncHtmlImage(
